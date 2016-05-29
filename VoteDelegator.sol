@@ -1,45 +1,61 @@
 /*
-	This is just a proof-of-concept 
-	The contract compiles, but has never been deployed, let alone been tested properly
+	This is a proof-of-concept.
+
+	The contract compiles, but:
+		- it has never been deployed
+		- let alone been tested properly
+		- let alone been security-audited in any way
+		- let alone been optimised for gas usage
+		- it has not even been *read* more than 5 times, probably
 	Use it at your own risk
 */
 
 
 /*
-	The VoteDelegator Contract provides simple way of delegating your votes in theDAO
+	The VoteDelegator contract provides way of delegating your votes in theDAO
 
 	It is meant as a quick way of adding delegation to the DAO
 	without having to change theDAO contract in any way
 	
-	It works like this. ("theDAO" refers to the DAO contact on the blockchain, and
-	theDelegator to a Delegator Instance on the blockchain)
+	It works like this. 
+	(Here, "theDAO" refers to the DAO contract on the blockchain, and
+	"theDelegator" to a VoteDelegator contract on the blockchain)
 	
-	  1) Tell the TheDAO that VoteDelegator is allowed to handle your DAO tokens 
+ 	1)  Tell the The DAO that VoteDelegator is allowed to handle your DAO tokens 
 
 		 	theDAO.approve(address(theDelegator), amount_of_tokens)
 	
-      2) put your DAO tokens in control of theDelegator:
+    2)  put your DAO tokens in control of the VoteDelegator:
 
             theDelegator.delegate(amount_of_tokens)
 
-	  3) Now you can vote by simply calling the "vote" function on the 
-		 delegator contract (exactly as you would vote on the DAO)
+	3)  Now you can vote by simply calling the "vote" function on the 
+		delegator contract (exactly as you would vote on the DAO)
 
 			 theDelegator.vote(_proposalID, _supportsProposal)
 
-         the Delegator contract will then register your vote, but only copy this vote
-		 to the DAO itself if certain conditions are met (in this contract, a simple majority count)
+        the Delegator contract will then register your vote internally, 
+        the Delegator will only vote in the DAO itself when certain
+		conditions are met (in this contract, a simple majority count)
 
-	  4) If you want to remove your delegation and have your DAO tokens back, call:
+	4)  If you want to remove your delegation and have your DAO tokens back, call:
 
 		 	theDelegator.undelegate()
 
-		Unfortunately, this function will only work when the Delegator tokens are not
-		locked into a vote. If the delegated tokens are locked, then your share of the tokens 
-		will be freed as soon as the voting period is over.
-		You will have to call "undelegate" again to transfer them back to you.
+	    This will make it so that the VoteDelegator will not use your tokens 
+	    for new votes any more. Your tokens my still be locked in a current vote,
+		so you'll have to wait until they are unlocked to call "undelegate" again
+		to transfer them back to you.
 */
 
+/*
+	Some use cases are:
+
+		- "tentative 'no' voting"
+		- liquid democracy style delegation
+		- delegate your vote to a Backfeed reputation system
+		- last-minute voting to keep you tokens locked up as little as possible	
+*/
 import "./theDAO/Token.sol";
 import "./theDAO/DAO.sol";
 
@@ -155,8 +171,7 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
 		DelegatedTokenAccount account = getAccount(msg.sender);
 
 		// close the account - it will not participate in any new votes
-		// TODO:
-		// account.active = false;
+		account.disactivate();
 
 		// update all talleys of open proposals where this user has voted
 		// this is not needed, because if the funds are free
@@ -220,7 +235,10 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
     ) {
 		for (uint i=0;i<accounts.length;i++) {
 			address account_adress = accounts[i];
-			DelegatedTokenAccount(account_adress).vote(_proposalID, _supportsProposal);
+			DelegatedTokenAccount account = DelegatedTokenAccount(account_adress);
+			if (account.is_active()) {
+				account.vote(_proposalID, _supportsProposal);
+			}
 		}
 	}
 
@@ -258,7 +276,7 @@ contract DelegatedTokenAccount {
 	address thedao_address;
 	address delegator;
 	// true if this account is used for voting
-	bool public active;
+	bool active;
 
 	// The constructor sets the address of the dao and the delegator
     function DelegatedTokenAccount(
@@ -277,6 +295,14 @@ contract DelegatedTokenAccount {
 		DAO thedao = DAO(thedao_address);
 		uint balance = thedao.balanceOf(address(this));
 		thedao.transfer(delegator, balance);
+	}
+
+	function disactivate() {
+		active = false;
+	}
+
+	function is_active() returns (bool _is_active) {
+		return active;	
 	}
 
 	function vote(
