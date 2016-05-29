@@ -49,12 +49,17 @@ contract VoteDelegatorInterface {
 
     // proposals that have been voted on
     Proposal[] proposals;
-    //  maps daoProposalIDs to indices in proposals for easier administration 
+    //  maps daoProposalIDs to indices in proposals 
     mapping (uint => uint) proposal_idx;
+
+    // maps user addresses to tokenaccounts managed by this contract
+    address[] accounts;
+    // map delegator addresses to account indexes
+    mapping (address => uint) accounts_idx;
     
     struct Proposal {
     	// the proposalID in the DAO
-    	uint dao_proposalID;
+    	uint proposalID;
         // True if the proposal's vote has been cast in the DAO
         bool closed;
         // Number of Tokens in favor of the proposal
@@ -65,7 +70,7 @@ contract VoteDelegatorInterface {
         mapping (address => bool) votedYes;
         // Simple mapping to check if a shareholder has voted against it
         mapping (address => bool) votedNo;
-    }
+    } 
 
     // Used to restrict access to certain functions to only Token Holders
     modifier onlyTokenholders {}	
@@ -103,22 +108,41 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
 		thedao_address = _thedao_address;
 	}	
 
+	function getAccount(address _delegator) returns (DelegatedTokenAccount) {
+		// get a DelegatedTokenAccount for this user
+		DelegatedTokenAccount  account;
+		address account_address = accounts[accounts_idx[msg.sender]];
+
+		if (account_address == 0) {
+			account = new DelegatedTokenAccount(thedao_address, _delegator);
+			accounts[accounts_idx[_delegator]] = address(account);
+		} else {
+			account = DelegatedTokenAccount(account_address);
+		}
+		return account;
+	}
+
 	function delegate(uint256 _value) returns (bool success) {
+
 		DAO thedao = DAO(thedao_address);
-		// try to transfer _value amount of DAO tokens to the present contract
 		if (balances[msg.sender] > 0) {
-			// for reasons of simplicity, a user can only delegate his tokens 
-			// once to this delegator
+			// for reasons of mental sanity, a user can only delegate his tokens 
+			// once to this delegator. (This can be fixed with some more bookkeeping)
 			throw;
 		}
 
 		if (thedao.allowance(msg.sender, address(this)) < _value) {
-			// 'Please call approve(address(this), _value) on the DAO contract'
+			// Please call approve(address(this), _value) on the DAO contract
 			throw;
 		}
-		if(thedao.transferFrom(msg.sender, address(this), _value)){
+
+		// get the account of the sender
+		DelegatedTokenAccount account = getAccount(msg.sender);
+
+		// transfer _value tokens to the senders Delegatedaccount
+		if(thedao.transferFrom(msg.sender, address(account), _value)){
 			// create a corresponding amount of VoteTokens
-			balances[msg.sender] = _value;
+			balances[msg.sender] += _value;
 			totalDelegatedTokens += _value;
 		} else {
 			// if transfer fails, do nothing
@@ -127,51 +151,50 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
 	}
 
 	function undelegate() returns (bool success) {
-		DAO thedao = DAO(thedao_address);
-		// try to transfer _value amount of DAO tokens from the present contract
-		// back to msg.sender 
-		uint amount_to_transfer = balances[msg.sender];
+		// get the account
+		DelegatedTokenAccount account = getAccount(msg.sender);
 
-		// then pay the msg.sender from there
-		if(thedao.transfer(msg.sender, amount_to_transfer)){
-			// we update all talleys of open proposals where this user has voted
-			for (uint i=0;i<proposals.length;i++) {
-				Proposal p = proposals[i];
-				if (!p.closed) {
-					if (p.votedYes[msg.sender]) {
-						p.yea -= balances[msg.sender];
-					}
-					if (p.votedNo[msg.sender]) {
-						p.nay -= balances[msg.sender];
-					}
+		// close the account - it will not participate in any new votes
+		// TODO:
+		// account.active = false;
+
+		// update all talleys of open proposals where this user has voted
+		// this is not needed, because if the funds are free
+		for (uint i=0;i<proposals.length;i++) {
+			Proposal p = proposals[i];
+			if (!p.closed) {
+				if (p.votedYes[msg.sender]) {
+					p.yea -= balances[msg.sender];
+				}
+				if (p.votedNo[msg.sender]) {
+					p.nay -= balances[msg.sender];
 				}
 			}
-			// remove all vote tokens
-			balances[msg.sender] = 0;
-		} else {
-			// if transfer fails, this is probably becauase your tokens are locked up
-			// TODO: FIXME: if this contract votes often, your tokens may be locked up 
-			// for a long time. 
-			throw;
 		}
+
+		// now ty to get the tokens back to msg.sender
+		account.returnTokens();
+
+		// remove all vote tokens
+		balances[msg.sender] = 0;
 	}
 
+	function vote(uint _proposalID, bool _supportsProposal) {
 
-	function vote(uint _proposalID, bool _supportsProposal)  returns (uint _voteID) {
-		// check if we have already transfered the DAO tokens to the contract address
 		if (balances[msg.sender] == 0) {
 			throw;
 		}
-
-		// get (or create) the Proposal
 		Proposal proposal;
+		// get (or create) the Proposal
 		if (proposal_idx[_proposalID] == 0) {
+			// we have a new proposal
 			proposal_idx[_proposalID] = proposals.length + 1;	
         	proposal = proposals[proposal_idx[_proposalID]];
-        	proposal.dao_proposalID = _proposalID;
+        	proposal.proposalID = _proposalID;
 		} else {
         	proposal = proposals[proposal_idx[_proposalID]];
         }
+ 
 
         // if the proposal is closed, don't bother
         if (proposal.closed) {
@@ -181,51 +204,89 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
 		if (proposal.votedYes[msg.sender] || proposal.votedNo[msg.sender]) {
 			throw;
 		}
+
 		if (_supportsProposal) {
 			proposal.yea += balances[msg.sender];
 			proposal.votedYes[msg.sender] = true;
 		} else {
 			proposal.nay += balances[msg.sender];
 			proposal.votedNo[msg.sender] = true;
-
 		}
+		copyVote(proposal);
+	}
+    function vote_in_thedao(
+        uint _proposalID,
+        bool _supportsProposal
+    ) {
+		for (uint i=0;i<accounts.length;i++) {
+			address account_adress = accounts[i];
+			DelegatedTokenAccount(account_adress).vote(_proposalID, _supportsProposal);
+		}
+	}
+
+
+	function copyVote(Proposal proposal) private returns (uint voteID) {
+		// Actually vote for the DAO
+		// this is where the magic of the contract is supposed to happen
+		// we can insert here any logic that seems reasonable:
+		// 		- majority votes
+		//		- follow the leader votes
+		//		- an implementation of the Backfeed Protocol
 		// for demonstration purposes, we implement a simple majority rule
 		// if more than half of the tokens votes yea (or nay), we copy
 		// that vote to the DAO for *all* tokens
 		DAO thedao = DAO(thedao_address);
 		if (2 * proposal.yea >= totalSupply) {
-			thedao.vote(_proposalID, true);
+			vote_in_thedao(proposal.proposalID, true);
 			proposal.closed = true;
 		}
 		if (2 * proposal.nay >= totalSupply) {
-			thedao.vote(_proposalID, false);
+			vote_in_thedao(proposal.proposalID, false);
 			proposal.closed = true;
 		}
 	}
+
 }
 
 
-contract DAOUnlockedTokenStorage {
-	/* a contract to handle the set tokens of a VoteDelegator contract
-	that are not to be locked in a (next) vote
+contract DelegatedTokenAccount {
+	/*	
+		an account to manage tokens for a user
+
 	*/
-
-	address creator;
+	address owner;
 	address thedao_address;
+	address delegator;
+	// true if this account is used for voting
+	bool public active;
 
-    modifier noEther() {if (msg.value > 0) throw; _}
+	// The constructor sets the address of the dao and the delegator
+    function DelegatedTokenAccount(
+    	address _thedao_address,
+    	address _delegator) {
+		owner = msg.sender;
+		thedao_address = _thedao_address;
+		delegator = _delegator;
+		active = true;
+    }
 
-	function DAOUnlockedTokenStorage() {
-		// constructor function 
-		creator = msg.sender;
-	}
-
-	function transfer(address _to, uint256 _amount) noEther returns (bool success) {
-		if (msg.sender != creator) {
+	function returnTokens() {
+		if (msg.sender != owner) {
 			throw;
-		}
+		}	
 		DAO thedao = DAO(thedao_address);
-		thedao.transfer(_to, _amount);
+		uint balance = thedao.balanceOf(address(this));
+		thedao.transfer(delegator, balance);
 	}
-   
+
+	function vote(
+        uint _proposalID,
+        bool _supportsProposal
+    ) returns (uint _voteID) {
+    	if (msg.sender != owner) {
+    		throw;	
+    	}
+		DAO thedao = DAO(thedao_address);
+		return thedao.vote(_proposalID, _supportsProposal);
+	}
 }
