@@ -232,7 +232,7 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
     function vote_in_thedao(
         uint _proposalID,
         bool _supportsProposal
-    ) {
+    ) private {
 		for (uint i=0;i<accounts.length;i++) {
 			address account_adress = accounts[i];
 			DelegatedTokenAccount account = DelegatedTokenAccount(account_adress);
@@ -244,15 +244,17 @@ contract VoteDelegator is Token, VoteDelegatorInterface {
 
 
 	function copyVote(Proposal proposal) private returns (uint voteID) {
-		// Actually vote for the DAO
-		// this is where the magic of the contract is supposed to happen
-		// we can insert here any logic that seems reasonable:
-		// 		- majority votes
-		//		- follow the leader votes
-		//		- an implementation of the Backfeed Protocol
-		// for demonstration purposes, we implement a simple majority rule
-		// if more than half of the tokens votes yea (or nay), we copy
-		// that vote to the DAO for *all* tokens
+		/* 
+		Actually vote for the DAO
+		   this is where the magic of the contract is supposed to happen
+		   we can insert here any logic that seems reasonable:
+		   		- majority votes
+		  		- follow the leader votes
+		  		- an implementation of the Backfeed Protocol
+		   for demonstration purposes, we implement a simple majority rule
+		   if more than half of the tokens votes yea (or nay), we copy
+		   that vote to the DAO for *all* tokens
+		*/
 		DAO thedao = DAO(thedao_address);
 		if (2 * proposal.yea >= totalSupply) {
 			vote_in_thedao(proposal.proposalID, true);
