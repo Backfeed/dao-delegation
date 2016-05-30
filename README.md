@@ -5,6 +5,10 @@ The VoteDelegator contract provides way of delegating your votes in theDAO.
 It is meant as a quick way of adding delegation to the DAO
 without having to change theDAO contract
 
+The contract can be seen as a generic container that can be adapted to particular use cases. 
+
+*It's proof-of-concept code, not production ready in any way*
+
 
 # Use Cases
 
@@ -39,15 +43,14 @@ Pool your tokens together with others, and use the Backfeed protocol to decide t
 
         theDelegator.delegate(amount_of_tokens)
 
-1. Now you can vote by calling the `vote` function on the 
+1. Optionally you can vote by calling the `vote` function on the 
    delegator contract (exactly as you would vote in the DAO)
 
         theDelegator.vote(_proposalID, _supportsProposal)
 
     the Delegator contract will then register your vote internally, 
-    the Delegator will only vote in the DAO itself when certain
-    conditions are met (in this contract, if the majority of the token holders
-    that delegated their vote to this contract voted yes/no)
+    
+    In the current example contract, the VoteDelegator will only vote in the DAO itself when the majority of the token holders that delegated their vote to this contract voted yes/no).
 
 1. If you want to remove your delegation and have your DAO tokens back, call:
 
